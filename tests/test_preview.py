@@ -102,6 +102,72 @@ assert.equal(app.open(state(),2),false);assert.ok(app.complete(state(),2).order)
 assert.equal(state().events.length,0);assert.equal(disk.data,null);
 """)
 
+    def test_locked_stage_overviews_keep_work_inaccessible(self):
+        self.run_js("""
+ui();click('nextButton');
+for(let first=0;first<3;first++){
+ for(let i=first+1;i<4;i++){
+  const row=nodes.get('steps').children[i],button=row.children[0],overview=row.children[1];
+  assert.equal(button.disabled,true);assert.equal(overview.tag,'p');
+  assert.equal(overview.hidden,false);assert.equal(overview.textContent,app.steps[i].description);
+  assert.ok(overview.textContent.length>20);assert.equal(overview.children.length,0);
+  const before=JSON.stringify(state()),fields=nodes.get('fields').children;
+  button.onclick();assert.equal(JSON.stringify(state()),before);
+  assert.equal(nodes.get('fields').children,fields);
+  assert.equal(app.open(state(),i),false);assert.ok(app.complete(state(),i).order);
+ }
+ fill(state(),first);vm.runInContext('renderHome()',context);click('nextButton');
+ assert.equal(nodes.get('workTitle').textContent,app.steps[first+1].title);
+ assert.equal(nodes.get('steps').children[first+1].children.length,1);
+}
+""")
+
+    def test_ui_mark_incomplete_preserves_all_inputs_and_persists(self):
+        for stage in range(4):
+            with self.subTest(stage=stage):
+                self.run_js("const stage=" + str(stage) + ";" + """
+const initial=full();for(const key of Object.keys(initial.values))initial.values[key]='保持する入力：'+key;
+disk.setItem(app.KEY,JSON.stringify(initial));ui();
+assert.equal(nodes.get('incompleteButton').hidden,true);
+nodes.get('steps').children[stage].children[0].onclick();
+assert.equal(nodes.get('incompleteButton').hidden,false);
+const values=JSON.stringify(state().values),checks=JSON.stringify(state().checks),events=JSON.stringify(state().events);
+click('incompleteButton');assert.equal(nodes.get('progressText').textContent,`${stage}/4`);
+assert.equal(nodes.get('summaryPanel').hidden,true);assert.equal(nodes.get('work').hidden,false);
+assert.equal(nodes.get('incompleteButton').hidden,true);assert.equal(nodes.get('incompleteButton').disabled,true);
+assert.equal(focused,'completeButton');assert.match(nodes.get('workFeedback').textContent,/入力内容.*保持/);
+assert.equal(nodes.get('nextDescription').textContent,app.steps[stage].description);
+assert.equal(JSON.stringify(state().values),values);assert.equal(JSON.stringify(state().checks),checks);
+assert.equal(JSON.stringify(state().events),events);
+for(const key of app.steps[stage].keys)assert.equal(nodes.get('input-'+key).value,state().values[key]);
+const restored=app.createStore(disk).state;
+assert.equal(JSON.stringify(restored.values),values);assert.equal(JSON.stringify(restored.checks),checks);
+for(let i=0;i<4;i++)assert.equal(restored.completed[i],i<stage);
+for(let i=stage+1;i<4;i++)assert.equal(nodes.get('steps').children[i].children[0].disabled,true);
+for(let i=stage;i<4;i++){click('nextButton');click('completeButton');}
+assert.equal(nodes.get('progressText').textContent,'4/4');assert.equal(JSON.stringify(state().values),values);
+""")
+
+    def test_ui_startup_read_failure_warns_and_allows_edit_and_retry(self):
+        self.run_js("""
+const original=JSON.stringify(full());disk.setItem(app.KEY,original);disk.failRead=true;ui();
+function warning(){
+ assert.match(nodes.get('storageStatus').textContent,/読み取れない/);
+ assert.match(nodes.get('storageStatus').textContent,/変更を保存できません/);
+ assert.match(nodes.get('storageStatus').textContent,/再読み込み.*失われます/);
+ assert.equal(nodes.get('retrySave').hidden,false);
+}
+warning();click('nextButton');input('trial','保存失敗中の入力');warning();
+assert.equal(state().values.trial,'保存失敗中の入力');assert.equal(disk.data,original);
+for(const id of ['factCheck','secretCheck']){nodes.get(id).checked=true;nodes.get(id).onchange();}
+click('completeButton');assert.equal(nodes.get('progressText').textContent,'1/4');warning();
+disk.failRead=false;disk.failWrite=true;click('retrySave');assert.match(nodes.get('storageStatus').textContent,/再読み込み.*失われます/);
+disk.failWrite=false;click('retrySave');assert.equal(nodes.get('retrySave').hidden,true);
+assert.match(nodes.get('storageStatus').textContent,/保存しました/);
+const restored=app.createStore(disk).state;
+assert.equal(restored.values.trial,'保存失敗中の入力');assert.equal(app.next(restored),1);
+""")
+
     def test_required_length_unicode_and_safety(self):
         self.run_js("""
 const s=app.fresh();
@@ -168,7 +234,7 @@ for(const mutate of [
 
     def test_read_write_failure_and_retry(self):
         self.run_js("""
-const disk=memory();disk.failRead=true;const st=app.createStore(disk);assert.match(st.status,/読み取れません/);
+const disk=memory();disk.failRead=true;const st=app.createStore(disk);assert.match(st.status,/読み取れない/);
 app.open(st.state,0);app.edit(st.state,'trial','保存できなくても編集');assert.equal(st.save(),false);
 disk.failRead=false;disk.failWrite=true;assert.equal(st.retry(),false);assert.match(st.status,/保存できません/);
 assert.equal(st.state.values.trial,'保存できなくても編集');disk.failWrite=false;
