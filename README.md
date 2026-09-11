@@ -17,4 +17,3 @@
 ## 状態
 
 Product Agentによる仕様策定済み。Developer AgentによるMVP実装を進行します。
-
